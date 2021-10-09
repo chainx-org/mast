@@ -193,7 +193,7 @@ fn generate_combine_index(n: usize, k: usize) -> Vec<Vec<usize>> {
     ans
 }
 
-pub fn generate_combine_pubkey(pubkeys: Vec<PublicKey>, k: usize) -> Result<Vec<XOnly>> {
+fn generate_combine_pubkey(pubkeys: Vec<PublicKey>, k: usize) -> Result<Vec<XOnly>> {
     let all_indexs = generate_combine_index(pubkeys.len(), k);
     let mut output: Vec<PublicKey> = vec![];
     for indexs in all_indexs {
