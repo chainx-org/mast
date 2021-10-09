@@ -69,35 +69,33 @@ impl Mast {
     }
 
     /// generate merkle proof
-    pub fn generate_merkle_proof(&self, pubkey: &PublicKey) -> Result<Vec<MerkleNode>> {
+    pub fn generate_merkle_proof(&self, pubkey: &PublicKey) -> Result<Vec<u8>> {
         let pubkey = &XOnly::try_from(pubkey.to_bytes().to_vec())?;
-        let proof = {
-            assert!(self.pubkeys.iter().any(|s| *s == *pubkey));
-            let mut matches = vec![];
-            let mut index = 9999;
-            for (i, s) in self.pubkeys.iter().enumerate() {
-                if *s == *pubkey {
-                    matches.push(true);
-                    index = i;
-                } else {
-                    matches.push(false)
-                }
-            }
-            let leaf_nodes = self
-                .pubkeys
-                .iter()
-                .map(|s| tagged_leaf(s))
-                .collect::<Result<Vec<_>>>()?;
-            let filter_proof = MerkleNode::from_inner(leaf_nodes[index].into_inner());
-            Ok(PartialMerkleTree::from_leaf_nodes(&leaf_nodes, &matches)?
-                .collected_hashes(filter_proof))
-        };
+        assert!(self.pubkeys.iter().any(|s| *s == *pubkey));
 
-        if proof.is_err() {
-            Err(MastError::MastGenProofError)
-        } else {
-            proof
+        let mut matches = vec![];
+        let mut index = 9999;
+        for (i, s) in self.pubkeys.iter().enumerate() {
+            if *s == *pubkey {
+                matches.push(true);
+                index = i;
+            } else {
+                matches.push(false)
+            }
         }
+        let leaf_nodes = self
+            .pubkeys
+            .iter()
+            .map(|s| tagged_leaf(s))
+            .collect::<Result<Vec<_>>>()?;
+        let filter_proof = MerkleNode::from_inner(leaf_nodes[index].into_inner());
+        Ok([
+            self.inner_pubkey.to_vec(),
+            PartialMerkleTree::from_leaf_nodes(&leaf_nodes, &matches)?
+                .collected_hashes(filter_proof)
+                .concat(),
+        ]
+        .concat())
     }
 
     /// generate threshold signature address
@@ -246,7 +244,7 @@ mod tests {
             vec![
                 "7c9a72882718402bf909b3c1693af60501c7243d79ecc8cf030fa253eb136861",
                 "a20c839d955cb10e58c6cbc75812684ad3a1a8f24a503e1c07f5e4944d974d3b",
-                "b69af178463918a181a8549d2cfbe77884852ace9d8b299bddf69bedc33f6356"
+                "b69af178463918a181a8549d2cfbe77884852ace9d8b299bddf69bedc33f6356",
             ]
         );
     }
@@ -306,11 +304,8 @@ mod tests {
         let proof = mast.generate_merkle_proof(&pubkey_ab).unwrap();
 
         assert_eq!(
-            proof.iter().map(|p| p.to_hex()).collect::<Vec<_>>(),
-            vec![
-                "0fa86e461c886db2edfa52a7eb11a96620e0bbdfd677c43b22f9ec2e3621ac0b",
-                "ddc014704d52a8c50371151848f2c521dd4ec1f7e98c21f4b26d6f0f05237ae1",
-            ]
+            hex::encode(&proof),
+                "881102cd9cf2ee389137a99a2ad88447b9e8b60c350cda71aff049233574c7680bac21362eecf9223bc477d6dfbbe02066a911eba752faedb26d881c466ea80fe17a23050f6f6db2f4218ce9f7c14edd21c5f24818157103c5a8524d7014c0dd",
         )
     }
 
