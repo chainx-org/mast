@@ -93,7 +93,7 @@ impl Mast {
                 .collected_hashes(filter_proof))
         };
 
-        if let Err(_) = proof {
+        if proof.is_err() {
             Err(MastError::MastGenProofError)
         } else {
             proof
@@ -190,7 +190,7 @@ fn generate_combine_index(n: usize, k: usize) -> Vec<Vec<usize>> {
         }
         temp[j] += 1;
     }
-    return ans;
+    ans
 }
 
 pub fn generate_combine_pubkey(pubkeys: Vec<PublicKey>, k: usize) -> Result<Vec<XOnly>> {

@@ -8,9 +8,9 @@ pub mod error;
 pub mod hash_types;
 pub mod mast;
 
+pub use crate::mast::*;
 pub use encode::*;
 pub use hash_types::*;
-pub use mast::*;
 
 #[cfg(feature = "std")]
 use std::{convert::TryFrom, io, ops::Deref};

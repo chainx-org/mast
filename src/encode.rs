@@ -142,6 +142,7 @@ impl VarInt {
     /// Gets the length of this VarInt when encoded.
     /// Returns 1 for 0..=0xFC, 3 for 0xFD..=(2^16-1), 5 for 0x10000..=(2^32-1),
     /// and 9 otherwise.
+    #[allow(clippy::len_without_is_empty)]
     #[allow(dead_code)]
     #[inline]
     pub fn len(&self) -> usize {
