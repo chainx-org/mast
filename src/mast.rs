@@ -71,7 +71,9 @@ impl Mast {
     /// generate merkle proof
     pub fn generate_merkle_proof(&self, pubkey: &PublicKey) -> Result<Vec<u8>> {
         let pubkey = &XOnly::try_from(pubkey.to_bytes().to_vec())?;
-        assert!(self.pubkeys.iter().any(|s| *s == *pubkey));
+        if !self.pubkeys.iter().any(|s| *s == *pubkey) {
+            return Err(MastError::MastGenProofError);
+        }
 
         let mut matches = vec![];
         let mut index = 9999;
