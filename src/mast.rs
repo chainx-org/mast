@@ -17,21 +17,35 @@ use hashes::{
     hex::{FromHex, ToHex},
     Hash,
 };
+use schnorrkel::musig::{aggregate_public_key_from_slice, AggregatePublicKey};
 use schnorrkel::PublicKey;
 
+use std::convert::TryFrom;
 use std::ops::Deref;
 
 /// Data structure that represents a partial mast tree
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Mast {
-    /// All leaf nodes of the mast tree
-    pub pubkeys: Vec<XOnly>,
+    /// The threshold aggregate public key
+    pubkeys: Vec<XOnly>,
+    /// The pubkey of all person
+    inner_pubkey: XOnly,
 }
 
 impl Mast {
     /// Create a mast instance
-    pub fn new(pubkeys: Vec<XOnly>) -> Self {
-        Mast { pubkeys }
+    pub fn new(mut person_pubkeys: Vec<PublicKey>, threshold: usize) -> Result<Self> {
+        let inner_pubkey = XOnly::try_from(
+            aggregate_public_key_from_slice(&mut person_pubkeys)
+                .ok_or(MastError::MastBuildError)?
+                .public_key()
+                .to_bytes()
+                .to_vec(),
+        )?;
+        Ok(Mast {
+            pubkeys: generate_combine_pubkey(person_pubkeys, threshold)?,
+            inner_pubkey,
+        })
     }
 
     /// calculate merkle root
@@ -55,7 +69,8 @@ impl Mast {
     }
 
     /// generate merkle proof
-    pub fn generate_merkle_proof(&self, pubkey: &XOnly) -> Result<Vec<MerkleNode>> {
+    pub fn generate_merkle_proof(&self, pubkey: &PublicKey) -> Result<Vec<MerkleNode>> {
+        let pubkey = &XOnly::try_from(pubkey.to_bytes().to_vec())?;
         let proof = {
             assert!(self.pubkeys.iter().any(|s| *s == *pubkey));
             let mut matches = vec![];
@@ -86,9 +101,9 @@ impl Mast {
     }
 
     /// generate threshold signature address
-    pub fn generate_tweak_pubkey(&self, inner_pubkey: &XOnly) -> Result<Vec<u8>> {
+    pub fn generate_tweak_pubkey(&self) -> Result<Vec<u8>> {
         let root = self.calc_root()?;
-        tweak_pubkey(inner_pubkey, &root)
+        tweak_pubkey(&self.inner_pubkey, &root)
     }
 }
 
@@ -156,98 +171,172 @@ pub fn tweak_pubkey(inner_pubkey: &[u8; 32], root: &MerkleNode) -> Result<Vec<u8
     Ok(point.compress().as_bytes().to_vec())
 }
 
+fn generate_combine_index(n: usize, k: usize) -> Vec<Vec<usize>> {
+    let mut temp: Vec<usize> = vec![];
+    let mut ans: Vec<Vec<usize>> = vec![];
+    for i in 1..=k {
+        temp.push(i)
+    }
+    temp.push(n + 1);
+
+    let mut j: usize = 0;
+    while j < k {
+        ans.push(temp[..k as usize].to_vec());
+        j = 0;
+
+        while j < k && temp[j] + 1 == temp[j + 1] {
+            temp[j] = j + 1;
+            j += 1;
+        }
+        temp[j] += 1;
+    }
+    return ans;
+}
+
+pub fn generate_combine_pubkey(pubkeys: Vec<PublicKey>, k: usize) -> Result<Vec<XOnly>> {
+    let all_indexs = generate_combine_index(pubkeys.len(), k);
+    let mut output: Vec<PublicKey> = vec![];
+    for indexs in all_indexs {
+        let mut temp: Vec<PublicKey> = vec![];
+        for index in indexs {
+            temp.push(pubkeys[index - 1])
+        }
+        output.push(
+            aggregate_public_key_from_slice(&mut temp)
+                .ok_or(MastError::MastBuildError)?
+                .public_key(),
+        )
+    }
+    output.sort_unstable();
+    output
+        .iter()
+        .map(|p| XOnly::try_from(p.to_bytes().to_vec()))
+        .collect::<Result<Vec<XOnly>>>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::convert::TryFrom;
     use hashes::hex::ToHex;
 
     #[test]
+    fn test_generate_combine_pubkey() {
+        // test data: https://github.com/chainx-org/threshold_signature/issues/1#issuecomment-909896156
+        let pubkey_a = PublicKey::from_bytes(
+            &hex::decode("005431ba274d567440f1da2fc4b8bc37e90d8155bf158966907b3f67a9e13b2d")
+                .unwrap(),
+        )
+        .unwrap();
+        let pubkey_b = PublicKey::from_bytes(
+            &hex::decode("90b0ae8d9be3dab2f61595eb357846e98c185483aff9fa211212a87ad18ae547")
+                .unwrap(),
+        )
+        .unwrap();
+        let pubkey_c = PublicKey::from_bytes(
+            &hex::decode("66768a820dd1e686f28167a572f5ea1acb8c3162cb33f0d4b2b6bee287742415")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            generate_combine_pubkey(vec![pubkey_a, pubkey_b, pubkey_c], 2)
+                .unwrap()
+                .iter()
+                .map(|p| hex::encode(&p.0))
+                .collect::<Vec<_>>(),
+            vec![
+                "7c9a72882718402bf909b3c1693af60501c7243d79ecc8cf030fa253eb136861",
+                "a20c839d955cb10e58c6cbc75812684ad3a1a8f24a503e1c07f5e4944d974d3b",
+                "b69af178463918a181a8549d2cfbe77884852ace9d8b299bddf69bedc33f6356"
+            ]
+        );
+    }
+
+    #[test]
     fn mast_generate_root_should_work() {
-        let pubkey_a = XOnly::try_from(
-            hex::decode("D69C3509BB99E412E68B0FE8544E72837DFA30746D8BE2AA65975F29D22DC7B9")
+        let pubkey_a = PublicKey::from_bytes(
+            &hex::decode("005431ba274d567440f1da2fc4b8bc37e90d8155bf158966907b3f67a9e13b2d")
                 .unwrap(),
         )
         .unwrap();
-        let pubkey_b = XOnly::try_from(
-            hex::decode("EEFDEA4CDB677750A420FEE807EACF21EB9898AE79B9768766E4FAA04A2D4A34")
+        let pubkey_b = PublicKey::from_bytes(
+            &hex::decode("90b0ae8d9be3dab2f61595eb357846e98c185483aff9fa211212a87ad18ae547")
                 .unwrap(),
         )
         .unwrap();
-        let pubkey_c = XOnly::try_from(
-            hex::decode("DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659")
+        let pubkey_c = PublicKey::from_bytes(
+            &hex::decode("66768a820dd1e686f28167a572f5ea1acb8c3162cb33f0d4b2b6bee287742415")
                 .unwrap(),
         )
         .unwrap();
-        let pubkeys = vec![pubkey_a, pubkey_b, pubkey_c];
-        let mast = Mast { pubkeys };
+        let person_pubkeys = vec![pubkey_a, pubkey_b, pubkey_c];
+        let mast = Mast::new(person_pubkeys, 2).unwrap();
         let root = mast.calc_root().unwrap();
 
         assert_eq!(
-            "4ac28f45b41d96319f16141ec8433362f35cadb1a44a0e40aea424a5ef34d828",
+            "41e3435f56ea7d09ee7450ccad226920bb656ce67b4888d0577eb45d02fa6e42",
             root.to_hex()
         );
     }
 
     #[test]
     fn mast_generate_merkle_proof_should_work() {
-        let pubkey_a = XOnly::try_from(
-            hex::decode("D69C3509BB99E412E68B0FE8544E72837DFA30746D8BE2AA65975F29D22DC7B9")
+        let pubkey_a = PublicKey::from_bytes(
+            &hex::decode("005431ba274d567440f1da2fc4b8bc37e90d8155bf158966907b3f67a9e13b2d")
                 .unwrap(),
         )
         .unwrap();
-        let pubkey_b = XOnly::try_from(
-            hex::decode("EEFDEA4CDB677750A420FEE807EACF21EB9898AE79B9768766E4FAA04A2D4A34")
+        let pubkey_b = PublicKey::from_bytes(
+            &hex::decode("90b0ae8d9be3dab2f61595eb357846e98c185483aff9fa211212a87ad18ae547")
                 .unwrap(),
         )
         .unwrap();
-        let pubkey_c = XOnly::try_from(
-            hex::decode("DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659")
+        let pubkey_c = PublicKey::from_bytes(
+            &hex::decode("66768a820dd1e686f28167a572f5ea1acb8c3162cb33f0d4b2b6bee287742415")
                 .unwrap(),
         )
         .unwrap();
-        let pubkeys = vec![pubkey_a, pubkey_b, pubkey_c];
-        let mast = Mast { pubkeys };
-        let proof = mast.generate_merkle_proof(&pubkey_a).unwrap();
+        let person_pubkeys = vec![pubkey_a, pubkey_b, pubkey_c];
+        let mast = Mast::new(person_pubkeys, 2).unwrap();
+        let pubkey_ab = PublicKey::from_bytes(
+            &hex::decode("7c9a72882718402bf909b3c1693af60501c7243d79ecc8cf030fa253eb136861")
+                .unwrap(),
+        )
+        .unwrap();
+
+        let proof = mast.generate_merkle_proof(&pubkey_ab).unwrap();
 
         assert_eq!(
             proof.iter().map(|p| p.to_hex()).collect::<Vec<_>>(),
             vec![
-                "f49b4c19bf53dfcdd50bc565ccca5cfc64226ef20301502f2264b25e2f0adb3a",
-                "aa4bc1ce7be6887fad68d95fcf8b0d19788640ead71837ed43a2b518e673ba2f",
+                "0fa86e461c886db2edfa52a7eb11a96620e0bbdfd677c43b22f9ec2e3621ac0b",
+                "ddc014704d52a8c50371151848f2c521dd4ec1f7e98c21f4b26d6f0f05237ae1",
             ]
         )
     }
 
     #[test]
     fn test_final_addr() {
-        let internal_key = XOnly::try_from(
-            hex::decode("881102cd9cf2ee389137a99a2ad88447b9e8b60c350cda71aff049233574c768")
+        let pubkey_a = PublicKey::from_bytes(
+            &hex::decode("005431ba274d567440f1da2fc4b8bc37e90d8155bf158966907b3f67a9e13b2d")
                 .unwrap(),
         )
         .unwrap();
+        let pubkey_b = PublicKey::from_bytes(
+            &hex::decode("90b0ae8d9be3dab2f61595eb357846e98c185483aff9fa211212a87ad18ae547")
+                .unwrap(),
+        )
+        .unwrap();
+        let pubkey_c = PublicKey::from_bytes(
+            &hex::decode("66768a820dd1e686f28167a572f5ea1acb8c3162cb33f0d4b2b6bee287742415")
+                .unwrap(),
+        )
+        .unwrap();
+        let person_pubkeys = vec![pubkey_a, pubkey_b, pubkey_c];
+        let mast = Mast::new(person_pubkeys, 2).unwrap();
 
-        let pubkey_a = XOnly::try_from(
-            hex::decode("7c9a72882718402bf909b3c1693af60501c7243d79ecc8cf030fa253eb136861")
-                .unwrap(),
-        )
-        .unwrap();
-        let pubkey_b = XOnly::try_from(
-            hex::decode("b69af178463918a181a8549d2cfbe77884852ace9d8b299bddf69bedc33f6356")
-                .unwrap(),
-        )
-        .unwrap();
-        let pubkey_c = XOnly::try_from(
-            hex::decode("a20c839d955cb10e58c6cbc75812684ad3a1a8f24a503e1c07f5e4944d974d3b")
-                .unwrap(),
-        )
-        .unwrap();
-        let pubkeys = vec![pubkey_a, pubkey_b, pubkey_c];
-        let mast = Mast { pubkeys };
-
-        let addr = mast.generate_tweak_pubkey(&internal_key).unwrap();
+        let addr = mast.generate_tweak_pubkey().unwrap();
         assert_eq!(
-            "001604bef08d1fe4cefb2e75a2b786287821546f6acbe89570acc5d5a9bd5049",
+            "d637ab113200c61d0188b6039de9738baa65d3e4f0d9f463a7aef8038c964021",
             hex::encode(addr)
         );
     }
