@@ -17,8 +17,10 @@ pub enum MastError {
     FromHexError(String),
     // Mainly used to handle io errors of encode
     IoError(String),
-    /// Error which may occur while processing keypairs.
-    KeyPairError(String),
+    /// Error which may occur by musig2
+    Musig2Error(String),
+    /// Error which encode to bench32
+    EncodeToBech32Error(String),
 }
 
 impl From<io::Error> for MastError {
@@ -57,10 +59,36 @@ impl From<hashes::hex::Error> for MastError {
     }
 }
 
-impl From<schnorrkel::SignatureError> for MastError {
-    fn from(e: schnorrkel::SignatureError) -> Self {
-        MastError::KeyPairError(format!("SignatureError({:?})", e))
+impl From<musig2::error::Error> for MastError {
+    fn from(e: musig2::error::Error) -> Self {
+        MastError::Musig2Error(format!("Musig2Error({:?})", e))
     }
 }
 
 pub type Result<T> = result::Result<T, MastError>;
+
+impl From<bech32::Error> for MastError {
+    fn from(e: bech32::Error) -> Self {
+        match e {
+            bech32::Error::MissingSeparator => {
+                MastError::EncodeToBech32Error("MissingSeparator".to_string())
+            }
+            bech32::Error::InvalidChecksum => {
+                MastError::EncodeToBech32Error("InvalidChecksum".to_string())
+            }
+            bech32::Error::InvalidLength => {
+                MastError::EncodeToBech32Error("InvalidLength".to_string())
+            }
+            bech32::Error::InvalidChar(c) => {
+                MastError::EncodeToBech32Error(format!("InvalidChar {}", c))
+            }
+            bech32::Error::InvalidData(d) => {
+                MastError::EncodeToBech32Error(format!("InvalidData {}", d))
+            }
+            bech32::Error::InvalidPadding => {
+                MastError::EncodeToBech32Error("InvalidPadding".to_string())
+            }
+            bech32::Error::MixedCase => MastError::EncodeToBech32Error("MixedCase".to_string()),
+        }
+    }
+}
