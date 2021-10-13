@@ -17,6 +17,14 @@ bitcoin_hashes = { version = "0.10.0", default-features = false, features = ["al
 schnorrkel = { git = "https://github.com/chainx-org/schnorrkel", branch = "master" }
 curve25519-dalek = { package = "curve25519-dalek-ng", version = "4.0", default-features = false }
 
+[dev-dependencies]
+rand_core = { version = "0.6.3", default-features = false }
+criterion = "0.3"
+
+[[bench]]
+name = "generate_merkle_proof"
+harness = false
+
 [features]
 default = ['std', 'getrandom']
 getrandom = ['rand/getrandom']

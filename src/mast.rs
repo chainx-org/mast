@@ -227,6 +227,7 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
+
         let pubkey_b = PublicKey::from_bytes(
             &hex::decode("90b0ae8d9be3dab2f61595eb357846e98c185483aff9fa211212a87ad18ae547")
                 .unwrap(),
