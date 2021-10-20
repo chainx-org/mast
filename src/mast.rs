@@ -31,7 +31,7 @@ pub struct Mast {
 impl Mast {
     /// Create a mast instance
     pub fn new(person_pubkeys: Vec<PublicKey>, threshold: usize) -> Result<Self> {
-        let inner_pubkey = KeyAgg::key_aggregation_n(&person_pubkeys, 0)?.X_tilde;
+        let inner_pubkey = KeyAgg::key_aggregation_n(&person_pubkeys)?.X_tilde;
         Ok(Mast {
             pubkeys: generate_combine_pubkey(person_pubkeys, threshold)?,
             inner_pubkey,
@@ -192,7 +192,7 @@ fn generate_combine_pubkey(pubkeys: Vec<PublicKey>, k: usize) -> Result<Vec<Publ
         for index in indexs {
             temp.push(pubkeys[index - 1].clone())
         }
-        output.push(KeyAgg::key_aggregation_n(&temp, 0)?.X_tilde)
+        output.push(KeyAgg::key_aggregation_n(&temp)?.X_tilde)
     }
     output.sort_by_key(|a| a.x_coor());
     Ok(output)
@@ -211,7 +211,6 @@ mod tests {
 
     #[test]
     fn test_generate_combine_pubkey() {
-        // test data: https://github.com/chainx-org/threshold_signature/issues/1#issuecomment-909024631
         let pubkey_a = convert_hex_to_pubkey("04f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9388f7b0f632de8140fe337e62a37f3566500a99934c2231b6cb9fd7584b8e672");
         let pubkey_b = convert_hex_to_pubkey("04dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba6592ce19b946c4ee58546f5251d441a065ea50735606985e5b228788bec4e582898");
         let pubkey_c = convert_hex_to_pubkey("04dd308afec5777e13121fa72b9cc1b7cc0139715309b086c960e18fd969774eb8f594bb5f72b37faae396a4259ea64ed5e6fdeb2a51c6467582b275925fab1394");
@@ -222,9 +221,9 @@ mod tests {
                 .map(|p| hex::encode(&p.serialize()))
                 .collect::<Vec<_>>(),
             vec![
-                "04828b16587113846bc89ab67058fb521dbacc32660b312688e9b270fe4eacc2a20dce48305985e1b2c635396122c4972f2429f1721b4fd020f7a228ca18cff905",
-                "04b5d07008e94b393759e7a8fdc1ade682cf6a1c11187e5f90b16a3cf9a11a9fe5ea54cef7fbdace8f69d881d43b3250f0638eb9f9f05d5fc462377ba40175de35",
-                "04ed8758a53267babe6cd44d62dc7cafb5454995254ed86cda657d29fab413fde82c87d05dfa89cb6f7bdd39ad1c835f141bfc8e4191c43a1caa84b5a1357339e4",
+                "0443498bc300426635cd1876077e3993bec1168d6c6fa1138f893ce41a5f51bf0a22a2a7a85830e1f9facf02488328be04ece354730e19ce2766d5dca1478483cd",
+                "04be1979e5e167d216a1229315844990606c2aba2d582472492a9eec7c9466460a286a71973e72f8d057235855253707ba73b5436d6170e702edf2ed5df46722b2",
+                "04e7c92d2ef4294389c385fedd5387fba806687f5aba1c7ba285093dacd69354d9b4f9ea87450c75954ade455677475e92fb5e303db36753c2ea20e47d3e939662",
             ]
         );
     }
@@ -239,7 +238,7 @@ mod tests {
         let root = mast.calc_root().unwrap();
 
         assert_eq!(
-            "0ef8fda7b8183fff400f9a9ebba33f86035e9f765339b3de15f3422dba5f8559",
+            "d215b815fd05016c6bdf980a61249c71c5d8fa327908c01183db2a6eb1f758e0",
             root.to_hex()
         );
     }
@@ -251,13 +250,13 @@ mod tests {
         let pubkey_c = convert_hex_to_pubkey("04dd308afec5777e13121fa72b9cc1b7cc0139715309b086c960e18fd969774eb8f594bb5f72b37faae396a4259ea64ed5e6fdeb2a51c6467582b275925fab1394");
         let person_pubkeys = vec![pubkey_a, pubkey_b, pubkey_c];
         let mast = Mast::new(person_pubkeys, 2).unwrap();
-        let pubkey_ab = convert_hex_to_pubkey("04b5d07008e94b393759e7a8fdc1ade682cf6a1c11187e5f90b16a3cf9a11a9fe5ea54cef7fbdace8f69d881d43b3250f0638eb9f9f05d5fc462377ba40175de35");
+        let pubkey_ab = convert_hex_to_pubkey("04e7c92d2ef4294389c385fedd5387fba806687f5aba1c7ba285093dacd69354d9b4f9ea87450c75954ade455677475e92fb5e303db36753c2ea20e47d3e939662");
 
         let proof = mast.generate_merkle_proof(&pubkey_ab).unwrap();
 
         assert_eq!(
             hex::encode(&proof),
-            "5f3b1b4ed3e06bbc9f63f872ea77798cad288bffa76344d527837481083b633715e6085165adc8b3654c747799e109071517384d696e4bd2ebecfd2182ab8baaaabc7ff37edf6e47a876490d6ff2c9479ba2ab2958749a8c5c012f5e7b78d298",
+            "f4152c91b2c78a3524e7858c72ffa360da59e7c3c4d67d6787cf1e3bfe1684c10bd30ee53bc06cba243e9467d6fc04a0416fbd86d68d167b66b05315a5a89d4d",
         )
     }
 
@@ -271,7 +270,7 @@ mod tests {
 
         let addr = mast.generate_tweak_pubkey().unwrap();
         assert_eq!(
-            "bc1pgmgdvc77nt4pml77zpg3t77duppgk3nuhclc2avhm3dur2cf7plq66ark5",
+            "bc1pxrtzfy85sl0hm6ym8w6f0qy46jznz7d256m5csdrqdgkepafk96sahp6jf",
             addr
         );
     }
