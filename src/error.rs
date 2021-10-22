@@ -17,6 +17,8 @@ pub enum MastError {
     FromHexError(String),
     // Mainly used to handle io errors of encode
     IoError(String),
+    /// Error which may occur by musig2
+    Musig2Error(String),
     /// Error which may occur while processing keypairs.
     KeyPairError(String),
 }
@@ -60,6 +62,12 @@ impl From<hashes::hex::Error> for MastError {
 impl From<schnorrkel::SignatureError> for MastError {
     fn from(e: schnorrkel::SignatureError) -> Self {
         MastError::KeyPairError(format!("SignatureError({:?})", e))
+    }
+}
+
+impl From<musig2::error::Error> for MastError {
+    fn from(e: musig2::error::Error) -> Self {
+        MastError::Musig2Error(format!("Musig2Error({:?})", e))
     }
 }
 

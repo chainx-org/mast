@@ -4,7 +4,6 @@
 use core::ops::AddAssign;
 
 use super::error::MastError;
-use super::XOnly;
 use super::{
     error::Result, pmt::PartialMerkleTree, serialize, LeafNode, MerkleNode, TapBranchHash,
     TapLeafHash, TapTweakHash, VarInt,
@@ -17,31 +16,22 @@ use hashes::{
     hex::{FromHex, ToHex},
     Hash,
 };
-use schnorrkel::musig::{aggregate_public_key_from_slice, AggregatePublicKey};
+use musig2::KeyAgg;
 use schnorrkel::PublicKey;
-
-use std::convert::TryFrom;
-use std::ops::Deref;
 
 /// Data structure that represents a partial mast tree
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Mast {
     /// The threshold aggregate public key
-    pubkeys: Vec<XOnly>,
+    pubkeys: Vec<PublicKey>,
     /// The pubkey of all person
-    inner_pubkey: XOnly,
+    inner_pubkey: PublicKey,
 }
 
 impl Mast {
     /// Create a mast instance
-    pub fn new(mut person_pubkeys: Vec<PublicKey>, threshold: usize) -> Result<Self> {
-        let inner_pubkey = XOnly::try_from(
-            aggregate_public_key_from_slice(&mut person_pubkeys)
-                .ok_or(MastError::MastBuildError)?
-                .public_key()
-                .to_bytes()
-                .to_vec(),
-        )?;
+    pub fn new(person_pubkeys: Vec<PublicKey>, threshold: usize) -> Result<Self> {
+        let inner_pubkey = KeyAgg::key_aggregation_n(&person_pubkeys)?.X_tilde;
         Ok(Mast {
             pubkeys: generate_combine_pubkey(person_pubkeys, threshold)?,
             inner_pubkey,
@@ -70,7 +60,6 @@ impl Mast {
 
     /// generate merkle proof
     pub fn generate_merkle_proof(&self, pubkey: &PublicKey) -> Result<Vec<u8>> {
-        let pubkey = &XOnly::try_from(pubkey.to_bytes().to_vec())?;
         if !self.pubkeys.iter().any(|s| *s == *pubkey) {
             return Err(MastError::MastGenProofError);
         }
@@ -92,7 +81,7 @@ impl Mast {
             .collect::<Result<Vec<_>>>()?;
         let filter_proof = MerkleNode::from_inner(leaf_nodes[index].into_inner());
         Ok([
-            self.inner_pubkey.to_vec(),
+            self.inner_pubkey.to_bytes().to_vec(),
             PartialMerkleTree::from_leaf_nodes(&leaf_nodes, &matches)?
                 .collected_hashes(filter_proof)
                 .concat(),
@@ -110,12 +99,12 @@ impl Mast {
 /// Calculate the leaf nodes from the pubkey
 ///
 /// tagged_hash("TapLeaf", bytes([leaf_version]) + ser_size(pubkey))
-pub fn tagged_leaf(pubkey: &XOnly) -> Result<LeafNode> {
+pub fn tagged_leaf(pubkey: &PublicKey) -> Result<LeafNode> {
     let mut x: Vec<u8> = vec![];
     x.extend(hex::decode("c0")?.iter());
     let ser_len = serialize(&VarInt(32u64))?;
     x.extend(&ser_len);
-    x.extend(pubkey.deref());
+    x.extend(&pubkey.to_bytes());
     Ok(LeafNode::from_hex(&TapLeafHash::hash(&x).to_hex())?)
 }
 
@@ -152,12 +141,13 @@ fn lexicographical_compare(
 }
 
 /// Compute tweak public key
-pub fn tweak_pubkey(inner_pubkey: &[u8; 32], root: &MerkleNode) -> Result<Vec<u8>> {
+pub fn tweak_pubkey(inner_pubkey: &PublicKey, root: &MerkleNode) -> Result<Vec<u8>> {
     // P + hash_tweak(P||root)G
     let mut x: Vec<u8> = vec![];
-    x.extend(inner_pubkey);
+    x.extend(&inner_pubkey.to_bytes());
     x.extend(&root.to_vec());
     let tweak_key = TapTweakHash::hash(&x);
+
     let mut bytes = [0u8; 32];
     bytes.copy_from_slice(&tweak_key[..]);
 
@@ -166,7 +156,6 @@ pub fn tweak_pubkey(inner_pubkey: &[u8; 32], root: &MerkleNode) -> Result<Vec<u8
 
     let mut point = base_point * scalar;
 
-    let inner_pubkey = PublicKey::from_bytes(inner_pubkey)?;
     point.add_assign(inner_pubkey.as_point());
     Ok(point.compress().as_bytes().to_vec())
 }
@@ -193,25 +182,18 @@ fn generate_combine_index(n: usize, k: usize) -> Vec<Vec<usize>> {
     ans
 }
 
-fn generate_combine_pubkey(pubkeys: Vec<PublicKey>, k: usize) -> Result<Vec<XOnly>> {
+fn generate_combine_pubkey(pubkeys: Vec<PublicKey>, k: usize) -> Result<Vec<PublicKey>> {
     let all_indexs = generate_combine_index(pubkeys.len(), k);
     let mut output: Vec<PublicKey> = vec![];
     for indexs in all_indexs {
         let mut temp: Vec<PublicKey> = vec![];
         for index in indexs {
-            temp.push(pubkeys[index - 1])
+            temp.push(pubkeys[index - 1].clone())
         }
-        output.push(
-            aggregate_public_key_from_slice(&mut temp)
-                .ok_or(MastError::MastBuildError)?
-                .public_key(),
-        )
+        output.push(KeyAgg::key_aggregation_n(&temp)?.X_tilde)
     }
     output.sort_unstable();
-    output
-        .iter()
-        .map(|p| XOnly::try_from(p.to_bytes().to_vec()))
-        .collect::<Result<Vec<XOnly>>>()
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -221,7 +203,6 @@ mod tests {
 
     #[test]
     fn test_generate_combine_pubkey() {
-        // test data: https://github.com/chainx-org/threshold_signature/issues/1#issuecomment-909896156
         let pubkey_a = PublicKey::from_bytes(
             &hex::decode("005431ba274d567440f1da2fc4b8bc37e90d8155bf158966907b3f67a9e13b2d")
                 .unwrap(),
@@ -242,12 +223,12 @@ mod tests {
             generate_combine_pubkey(vec![pubkey_a, pubkey_b, pubkey_c], 2)
                 .unwrap()
                 .iter()
-                .map(|p| hex::encode(&p.0))
+                .map(|p| hex::encode(p.to_bytes()))
                 .collect::<Vec<_>>(),
             vec![
-                "7c9a72882718402bf909b3c1693af60501c7243d79ecc8cf030fa253eb136861",
-                "a20c839d955cb10e58c6cbc75812684ad3a1a8f24a503e1c07f5e4944d974d3b",
-                "b69af178463918a181a8549d2cfbe77884852ace9d8b299bddf69bedc33f6356",
+                "2c8ecd0c8c408939dcf72d1fbea15906c54cb2f1a6203145f2d8225d46c60c35",
+                "7aeffb59f788aca9732e506d08ce9471c0ee3ee258051fb7e597d836bf328102",
+                "de1db0c13585b848306cc4fd0685640dd76c8919720f6bac08331b712b979b11",
             ]
         );
     }
@@ -274,7 +255,7 @@ mod tests {
         let root = mast.calc_root().unwrap();
 
         assert_eq!(
-            "41e3435f56ea7d09ee7450ccad226920bb656ce67b4888d0577eb45d02fa6e42",
+            "599dea9bc17c1e7f86a7b21de0304a2062fe57ded175f4e4c3a5a52e26b3ed2c",
             root.to_hex()
         );
     }
@@ -298,8 +279,9 @@ mod tests {
         .unwrap();
         let person_pubkeys = vec![pubkey_a, pubkey_b, pubkey_c];
         let mast = Mast::new(person_pubkeys, 2).unwrap();
+
         let pubkey_ab = PublicKey::from_bytes(
-            &hex::decode("7c9a72882718402bf909b3c1693af60501c7243d79ecc8cf030fa253eb136861")
+            &hex::decode("de1db0c13585b848306cc4fd0685640dd76c8919720f6bac08331b712b979b11")
                 .unwrap(),
         )
         .unwrap();
@@ -308,7 +290,7 @@ mod tests {
 
         assert_eq!(
             hex::encode(&proof),
-                "881102cd9cf2ee389137a99a2ad88447b9e8b60c350cda71aff049233574c7680bac21362eecf9223bc477d6dfbbe02066a911eba752faedb26d881c466ea80fe17a23050f6f6db2f4218ce9f7c14edd21c5f24818157103c5a8524d7014c0dd",
+                "3870f07f65eb0f65e13cb53910966ea5fc7adad570d103a1e992b98e376c95420cddec2ff39d01b800a7b10550f553ffc02a749edb5fc43d9943818b3263c859",
         )
     }
 
@@ -334,7 +316,7 @@ mod tests {
 
         let addr = mast.generate_tweak_pubkey().unwrap();
         assert_eq!(
-            "d637ab113200c61d0188b6039de9738baa65d3e4f0d9f463a7aef8038c964021",
+            "2623a598f40659352150c8fb5bdbd0baca6ae7d8e3cbefaad55b376e265d3c0e",
             hex::encode(addr)
         );
     }
