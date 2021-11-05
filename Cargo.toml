@@ -6,7 +6,7 @@ version = "0.1.0"
 
 [dependencies]
 arrayref = { version = "0.3.6" }
-bech32 = { version = "0.8.1" }
+bitcoin-bech32 = { git = "https://github.com/chainx-org/rust-bech32-bitcoin", branch = "master", default-features = false }
 core2 = { version = "0.3.0", default-features = false, features = ["alloc"] }
 digest = { version = "0.9.0", default-features = false }
 sha2 = { version = "0.9.5", default-features = false }

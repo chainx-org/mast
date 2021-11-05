@@ -3,8 +3,8 @@
 
 use super::{
     error::{MastError, Result},
-    hash_types::*,
     mast::tagged_branch,
+    LeafNode, MerkleNode,
 };
 use hashes::Hash;
 

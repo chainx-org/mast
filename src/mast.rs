@@ -1,15 +1,16 @@
 #![allow(dead_code)]
 #![allow(clippy::module_inception)]
 
-use bech32::{self, u5, ToBase32, Variant};
+use bitcoin_bech32::{constants::Network, u5, WitnessProgram};
 
 use super::{
     error::{MastError, Result},
     pmt::PartialMerkleTree,
-    serialize, LeafNode, MerkleNode, TapBranchHash, TapLeafHash, TapTweakHash, VarInt,
+    serialize, HashAdd, LeafNode, MerkleNode, Tagged, VarInt,
 };
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec, vec::Vec};
+use digest::Digest;
 use hashes::{
     hex::{FromHex, ToHex},
     Hash,
@@ -18,6 +19,8 @@ use musig2::{
     key::{PrivateKey, PublicKey},
     musig2::KeyAgg,
 };
+
+const DEFAULT_TAPSCRIPT_VER: u8 = 0xc0;
 
 /// Data structure that represents a partial mast tree
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -45,7 +48,6 @@ impl Mast {
             .iter()
             .map(|s| tagged_leaf(s))
             .collect::<Result<Vec<_>>>()?;
-
         let mut matches = vec![true];
 
         if self.pubkeys.len() < 2 {
@@ -89,10 +91,30 @@ impl Mast {
         .concat())
     }
 
-    /// generate threshold signature address
-    pub fn generate_tweak_pubkey(&self) -> Result<String> {
+    /// generate threshold signature tweak pubkey
+    pub fn generate_tweak_pubkey(&self) -> Result<PublicKey> {
         let root = self.calc_root()?;
         tweak_pubkey(&self.inner_pubkey, &root)
+    }
+
+    /// generate threshold signature address
+    pub fn generate_address(&self, network: &str) -> Result<String> {
+        let network = match network.to_lowercase().as_str() {
+            "regtest" => Network::Regtest,
+            "testnet" => Network::Testnet,
+            "mainnet" => Network::Bitcoin,
+            "signet" => Network::Signet,
+            _ => Network::Bitcoin,
+        };
+        let root = self.calc_root()?;
+        let tweak = tweak_pubkey(&self.inner_pubkey, &root)?;
+        let witness = WitnessProgram::new(
+            u5::try_from_u8(1).map_err(|_| MastError::EncodeToBech32Error)?,
+            tweak.x_coor().to_vec(),
+            network,
+        )
+        .map_err(|_| MastError::EncodeToBech32Error)?;
+        Ok(witness.to_string())
     }
 }
 
@@ -101,11 +123,18 @@ impl Mast {
 /// tagged_hash("TapLeaf", bytes([leaf_version]) + ser_size(pubkey))
 pub fn tagged_leaf(pubkey: &PublicKey) -> Result<LeafNode> {
     let mut x: Vec<u8> = vec![];
-    x.extend(hex::decode("c0")?.iter());
-    let ser_len = serialize(&VarInt(32u64))?;
+    let version = DEFAULT_TAPSCRIPT_VER & 0xfe;
+    x.push(version);
+    let ser_len = serialize(&VarInt(34u64))?;
     x.extend(&ser_len);
+    x.push(0x20);
     x.extend(&pubkey.x_coor());
-    Ok(LeafNode::from_hex(&TapLeafHash::hash(&x).to_hex())?)
+    x.push(0xac);
+    let hash = sha2::Sha256::default()
+        .tagged(b"TapLeaf")
+        .add(&x[..])
+        .finalize();
+    Ok(LeafNode::from_hex(&hash.to_hex())?)
 }
 
 /// Calculate branch nodes from left and right children
@@ -119,10 +148,14 @@ pub fn tagged_branch(left_node: MerkleNode, right_node: MerkleNode) -> Result<Me
     if left_node != right_node {
         let mut x: Vec<u8> = vec![];
         let (left_node, right_node) = lexicographical_compare(left_node, right_node);
+
         x.extend(left_node.to_vec().iter());
         x.extend(right_node.to_vec().iter());
-
-        Ok(MerkleNode::from_hex(&TapBranchHash::hash(&x).to_hex())?)
+        let hash = sha2::Sha256::default()
+            .tagged(b"TapBranch")
+            .add(&x[..])
+            .finalize();
+        Ok(MerkleNode::from_hex(&hash.to_hex())?)
     } else {
         Ok(left_node)
     }
@@ -133,33 +166,32 @@ fn lexicographical_compare(
     left_node: MerkleNode,
     right_node: MerkleNode,
 ) -> (MerkleNode, MerkleNode) {
-    if right_node.to_vec() < left_node.to_vec() {
+    if right_node.to_hex() < left_node.to_hex() {
         (right_node, left_node)
     } else {
         (left_node, right_node)
     }
 }
 
-pub fn bench32m(p: &PublicKey) -> Result<String> {
-    // https://github.com/bitcoin/bips/blob/master/bip-0350.mediawiki#Test_vectors_for_Bech32m
-    let mut data = vec![u5::try_from_u8(1).expect("It will definitely be converted to u5")];
-    data.extend(p.x_coor().to_vec().to_base32());
-    Ok(bech32::encode("bc", data, Variant::Bech32m)?)
-}
-
 /// Compute tweak public key
-pub fn tweak_pubkey(inner_pubkey: &PublicKey, root: &MerkleNode) -> Result<String> {
+pub fn tweak_pubkey(inner_pubkey: &PublicKey, root: &MerkleNode) -> Result<PublicKey> {
     // P + hash_tweak(P||root)G
     let mut x: Vec<u8> = vec![];
     x.extend(&inner_pubkey.x_coor());
     x.extend(&root.to_vec());
-    let tweak_key = TapTweakHash::hash(&x);
+    let hash = sha2::Sha256::default()
+        .tagged(b"TapTweak")
+        .add(&x[..])
+        .finalize();
+    let tweak_key = hash.as_slice();
     let mut bytes = [0u8; 32];
-    bytes.copy_from_slice(&tweak_key[..]);
+    bytes.copy_from_slice(tweak_key);
     let point = PublicKey::create_from_private_key(&PrivateKey::parse(&bytes)?);
-
-    let tweak_pubkey = point.add_point(inner_pubkey)?;
-    bench32m(&tweak_pubkey)
+    if inner_pubkey.is_odd_y() {
+        Ok(point.add_point(&inner_pubkey.neg())?)
+    } else {
+        Ok(point.add_point(inner_pubkey)?)
+    }
 }
 
 fn generate_combine_index(n: usize, k: usize) -> Vec<Vec<usize>> {
@@ -204,9 +236,18 @@ mod tests {
     use hashes::hex::ToHex;
 
     fn convert_hex_to_pubkey(p: &str) -> PublicKey {
-        let mut key = [0u8; 65];
-        key.copy_from_slice(&hex::decode(p).unwrap());
-        PublicKey::parse(&key).unwrap()
+        let p = hex::decode(p).unwrap();
+        if p.len() == 65 {
+            let mut key = [0u8; 65];
+            key.copy_from_slice(&p);
+            PublicKey::parse(&key).unwrap()
+        } else if p.len() == 33 {
+            let mut key = [0u8; 33];
+            key.copy_from_slice(&p);
+            PublicKey::parse_compressed(&key).unwrap()
+        } else {
+            panic!("InvalidPublicKey");
+        }
     }
 
     #[test]
@@ -238,7 +279,7 @@ mod tests {
         let root = mast.calc_root().unwrap();
 
         assert_eq!(
-            "d215b815fd05016c6bdf980a61249c71c5d8fa327908c01183db2a6eb1f758e0",
+            "043d45212e3d4ce3db2c7ed74c51eaa3b2efbd29eac74d4673f2b1c90aaa5b9a",
             root.to_hex()
         );
     }
@@ -256,21 +297,27 @@ mod tests {
 
         assert_eq!(
             hex::encode(&proof),
-            "f4152c91b2c78a3524e7858c72ffa360da59e7c3c4d67d6787cf1e3bfe1684c10bd30ee53bc06cba243e9467d6fc04a0416fbd86d68d167b66b05315a5a89d4d",
+            "f4152c91b2c78a3524e7858c72ffa360da59e7c3c4d67d6787cf1e3bfe1684c1d60740627de2fc3550e13ed15bae3b0f7a84e0bed80bd508c503b8ef3a3c9957",
         )
     }
 
     #[test]
     fn test_final_addr() {
-        let pubkey_a = convert_hex_to_pubkey("04f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9388f7b0f632de8140fe337e62a37f3566500a99934c2231b6cb9fd7584b8e672");
-        let pubkey_b = convert_hex_to_pubkey("04dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba6592ce19b946c4ee58546f5251d441a065ea50735606985e5b228788bec4e582898");
-        let pubkey_c = convert_hex_to_pubkey("04dd308afec5777e13121fa72b9cc1b7cc0139715309b086c960e18fd969774eb8f594bb5f72b37faae396a4259ea64ed5e6fdeb2a51c6467582b275925fab1394");
-        let person_pubkeys = vec![pubkey_a, pubkey_b, pubkey_c];
+        let pubkey_alice = convert_hex_to_pubkey(
+            "0283f579dd2380bd31355d066086e1b4d46b518987c1f8a64d4c0101560280eae2",
+        );
+        let pubkey_bob = convert_hex_to_pubkey(
+            "027a0868a14bd18e2e45ff3ad960f892df8d0edd1a5685f0a1dc63c7986d4ad55d",
+        );
+        let pubkey_charlie = convert_hex_to_pubkey(
+            "02c9929543dfa1e0bb84891acd47bfa6546b05e26b7a04af8eb6765fcc969d565f",
+        );
+        let person_pubkeys = vec![pubkey_alice, pubkey_bob, pubkey_charlie];
         let mast = Mast::new(person_pubkeys, 2).unwrap();
 
-        let addr = mast.generate_tweak_pubkey().unwrap();
+        let addr = mast.generate_address("Mainnet").unwrap();
         assert_eq!(
-            "bc1pxrtzfy85sl0hm6ym8w6f0qy46jznz7d256m5csdrqdgkepafk96sahp6jf",
+            "bc1pn202yeugfa25nssxk2hv902kmxrnp7g9xt487u256n20jgahuwas6syxhp",
             addr
         );
     }
