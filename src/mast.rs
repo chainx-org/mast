@@ -270,7 +270,7 @@ mod tests {
         )
         .unwrap();
         let person_pubkeys = vec![pubkey_a, pubkey_b, pubkey_c];
-        let mast = Mast::new(person_pubkeys, 3).unwrap();
+        let mast = Mast::new(person_pubkeys, 2).unwrap();
         let root = mast.calc_root().unwrap();
 
         assert_eq!(
