@@ -1,8 +1,6 @@
 #![allow(dead_code)]
 #![allow(clippy::module_inception)]
 
-use bitcoin_bech32::{constants::Network, u5, WitnessProgram};
-use rayon::prelude::*;
 use super::{
     error::{MastError, Result},
     pmt::PartialMerkleTree,
@@ -10,6 +8,7 @@ use super::{
 };
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec, vec::Vec};
+use bitcoin_bech32::{constants::Network, u5, WitnessProgram};
 use digest::Digest;
 use hashes::{
     hex::{FromHex, ToHex},
@@ -19,6 +18,7 @@ use musig2::{
     key::{PrivateKey, PublicKey},
     musig2::KeyAgg,
 };
+use rayon::prelude::*;
 
 const DEFAULT_TAPSCRIPT_VER: u8 = 0xc0;
 
@@ -88,7 +88,7 @@ impl Mast {
                 .collected_hashes(filter_proof)
                 .concat(),
         ]
-            .concat())
+        .concat())
     }
 
     /// generate threshold signature tweak pubkey
@@ -113,7 +113,7 @@ impl Mast {
             tweak.x_coor().to_vec(),
             network,
         )
-            .map_err(|_| MastError::EncodeToBech32Error)?;
+        .map_err(|_| MastError::EncodeToBech32Error)?;
         Ok(witness.to_string())
     }
 }
@@ -226,7 +226,10 @@ fn generate_combine_pubkey(pubkeys: Vec<PublicKey>, k: usize) -> Result<Vec<Publ
         }
         pks.push(temp);
     }
-    let mut output = pks.par_iter().map(|ps| Ok(KeyAgg::key_aggregation_n(&ps)?.X_tilde)).collect::<Result<Vec<PublicKey>>>()?;
+    let mut output = pks
+        .par_iter()
+        .map(|ps| Ok(KeyAgg::key_aggregation_n(&ps)?.X_tilde))
+        .collect::<Result<Vec<PublicKey>>>()?;
     output.sort_by_key(|a| a.x_coor());
     Ok(output)
 }
@@ -238,6 +241,7 @@ mod tests {
 
     use super::*;
     use hashes::hex::ToHex;
+    use musig2::KeyPair;
     use test::Bencher;
 
     fn convert_hex_to_pubkey(p: &str) -> PublicKey {
@@ -289,16 +293,18 @@ mod tests {
 
     #[bench]
     fn bench_generate_combine_pubkey(b: &mut Bencher) {
-        let n = 100;
-        let m = 99;
+        let n = 10;
+        let m = 5;
         println!("combine:{}", compute_combine(n, m));
         let pubkey = convert_hex_to_pubkey("04f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9388f7b0f632de8140fe337e62a37f3566500a99934c2231b6cb9fd7584b8e672");
         let pks = vec![pubkey; n];
-        b.iter(|| generate_combine_pubkey(pks.clone(), m)
-            .unwrap()
-            .iter()
-            .map(|p| hex::encode(&p.serialize()))
-            .collect::<Vec<_>>());
+        b.iter(|| {
+            generate_combine_pubkey(pks.clone(), m)
+                .unwrap()
+                .iter()
+                .map(|p| hex::encode(&p.serialize()))
+                .collect::<Vec<_>>()
+        });
     }
 
     #[test]
@@ -314,6 +320,20 @@ mod tests {
             "69e1de34d13d69fd894d708d656d0557cacaa18a093a6e86327a991d95c6c8e1",
             root.to_hex()
         );
+    }
+
+    #[bench]
+    fn bench_generate_root(b: &mut Bencher) {
+        let n = 250;
+        let m = 249;
+        println!("combine:{}", compute_combine(n, m));
+        let pks = (1..n)
+            .map(|_| KeyPair::create().unwrap().public_key)
+            .collect::<Vec<_>>();
+        b.iter(|| {
+            let mast = Mast::new(pks.clone(), m).unwrap();
+            let _root = mast.calc_root().unwrap();
+        });
     }
 
     #[test]
