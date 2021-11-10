@@ -58,9 +58,9 @@ impl Mast {
 
         let mut matches = vec![true];
 
-        if self.pubkeys.len() < 2 {
-            return Err(MastError::MastBuildError);
-        }
+        // if self.pubkeys.len() < 2 {
+        //     return Err(MastError::MastBuildError);
+        // }
         matches.extend(&vec![false; self.pubkeys.len() - 1]);
         let pmt = PartialMerkleTree::from_leaf_nodes(&leaf_nodes, &matches)?;
         let mut matches_vec: Vec<LeafNode> = vec![];
@@ -270,7 +270,7 @@ mod tests {
         )
         .unwrap();
         let person_pubkeys = vec![pubkey_a, pubkey_b, pubkey_c];
-        let mast = Mast::new(person_pubkeys, 2).unwrap();
+        let mast = Mast::new(person_pubkeys, 3).unwrap();
         let root = mast.calc_root().unwrap();
 
         assert_eq!(
