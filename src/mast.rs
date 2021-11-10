@@ -50,9 +50,9 @@ impl Mast {
             .collect::<Result<Vec<_>>>()?;
         let mut matches = vec![true];
 
-        if self.pubkeys.len() < 2 {
-            return Err(MastError::MastBuildError);
-        }
+        // if self.pubkeys.len() < 2 {
+        //     return Err(MastError::MastBuildError);
+        // }
         matches.extend(&vec![false; self.pubkeys.len() - 1]);
         let pmt = PartialMerkleTree::from_leaf_nodes(&leaf_nodes, &matches)?;
         let mut matches_vec: Vec<LeafNode> = vec![];
@@ -279,7 +279,7 @@ mod tests {
         let root = mast.calc_root().unwrap();
 
         assert_eq!(
-            "043d45212e3d4ce3db2c7ed74c51eaa3b2efbd29eac74d4673f2b1c90aaa5b9a",
+            "69e1de34d13d69fd894d708d656d0557cacaa18a093a6e86327a991d95c6c8e1",
             root.to_hex()
         );
     }
@@ -297,7 +297,7 @@ mod tests {
 
         assert_eq!(
             hex::encode(&proof),
-            "f4152c91b2c78a3524e7858c72ffa360da59e7c3c4d67d6787cf1e3bfe1684c1d60740627de2fc3550e13ed15bae3b0f7a84e0bed80bd508c503b8ef3a3c9957",
+            "f4152c91b2c78a3524e7858c72ffa360da59e7c3c4d67d6787cf1e3bfe1684c1e38e30c81fc61186d0ed3956b5e49bd175178a638d1410e64f7716697a7e0ccd",
         )
     }
 
