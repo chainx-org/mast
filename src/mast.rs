@@ -20,6 +20,7 @@ use hashes::{
 use schnorrkel::musig::{aggregate_public_key_from_slice, AggregatePublicKey};
 use schnorrkel::PublicKey;
 
+use rayon::prelude::*;
 use std::convert::TryFrom;
 use std::ops::Deref;
 
@@ -195,18 +196,22 @@ fn generate_combine_index(n: usize, k: usize) -> Vec<Vec<usize>> {
 
 fn generate_combine_pubkey(pubkeys: Vec<PublicKey>, k: usize) -> Result<Vec<XOnly>> {
     let all_indexs = generate_combine_index(pubkeys.len(), k);
-    let mut output: Vec<PublicKey> = vec![];
+    let mut pks = vec![];
     for indexs in all_indexs {
         let mut temp: Vec<PublicKey> = vec![];
         for index in indexs {
             temp.push(pubkeys[index - 1])
         }
-        output.push(
-            aggregate_public_key_from_slice(&mut temp)
-                .ok_or(MastError::MastBuildError)?
-                .public_key(),
-        )
+        pks.push(temp);
     }
+    let mut output = pks
+        .par_iter()
+        .map(|ps| {
+            Ok(aggregate_public_key_from_slice(&mut ps.clone())
+                .ok_or(MastError::MastBuildError)?
+                .public_key())
+        })
+        .collect::<Result<Vec<PublicKey>>>()?;
     output.sort_unstable();
     output
         .iter()
