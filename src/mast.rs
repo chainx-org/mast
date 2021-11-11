@@ -17,6 +17,7 @@ use hashes::{
     Hash,
 };
 use musig2::KeyAgg;
+use rayon::prelude::*;
 use schnorrkel::PublicKey;
 
 /// Data structure that represents a partial mast tree
@@ -184,14 +185,18 @@ fn generate_combine_index(n: usize, k: usize) -> Vec<Vec<usize>> {
 
 fn generate_combine_pubkey(pubkeys: Vec<PublicKey>, k: usize) -> Result<Vec<PublicKey>> {
     let all_indexs = generate_combine_index(pubkeys.len(), k);
-    let mut output: Vec<PublicKey> = vec![];
+    let mut pks = vec![];
     for indexs in all_indexs {
         let mut temp: Vec<PublicKey> = vec![];
         for index in indexs {
             temp.push(pubkeys[index - 1].clone())
         }
-        output.push(KeyAgg::key_aggregation_n(&temp)?.X_tilde)
+        pks.push(temp);
     }
+    let mut output = pks
+        .par_iter()
+        .map(|ps| Ok(KeyAgg::key_aggregation_n(&ps)?.X_tilde))
+        .collect::<Result<Vec<PublicKey>>>()?;
     output.sort_unstable();
     Ok(output)
 }
