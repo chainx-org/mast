@@ -15,7 +15,7 @@ rand_core = { version = "0.6.3", default-features = false, features = ["alloc"] 
 rayon = "1.5.0"
 bitcoin_hashes = { version = "0.10.0", default-features = false, features = ["alloc"] }
 schnorrkel = { git = "https://github.com/chainx-org/schnorrkel", branch = "musig2" }
-musig2 = { git = "https://github.com/chainx-org/Musig2.git", branch = "sr25519" }
+musig2 = { git = "ssh://git@github.com/chainx-org/Musig2.git", branch = "sr25519" }
 curve25519-dalek = { package = "curve25519-dalek-ng", version = "4.0", default-features = false }
 
 [dev-dependencies]
